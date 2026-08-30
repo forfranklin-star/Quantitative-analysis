@@ -16,6 +16,7 @@ A股量化策略分析器
   streamlit run app.py
 """
 
+import time
 import warnings
 from datetime import datetime
 
@@ -23,10 +24,17 @@ import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 import akshare as ak
+import yfinance as yf
 import streamlit as st
+import requests
 from plotly.subplots import make_subplots
 
 warnings.filterwarnings("ignore")
+
+# 全局设置 requests 默认超时，避免 AkShare 底层调用长时间挂起
+requests.adapters.DEFAULT_RETRIES = 3
+_SESSION = requests.Session()
+_SESSION.timeout = 15
 
 # ============================================================
 # 页面全局配置（必须在所有 st 命令之前调用）
@@ -40,66 +48,156 @@ st.set_page_config(
 
 
 # ============================================================
-# 一、数据获取模块
+# 一、数据获取模块（多数据源自动降级）
+#   统一输出列：date, open, close, high, low, volume, amount, pct_chg
+#   按 DATA_SOURCES 优先级依次尝试，第一个成功的即使用
 # ============================================================
-@st.cache_data(ttl=3600, show_spinner="正在从 AkShare 获取行情数据…")
+
+def _normalize_akshare(df_raw: pd.DataFrame) -> pd.DataFrame:
+    """将 AkShare 返回的中文列名数据标准化为统一格式。"""
+    df = df_raw.rename(
+        columns={
+            "日期": "date", "开盘": "open", "收盘": "close",
+            "最高": "high", "最低": "low", "成交量": "volume",
+            "成交额": "amount", "涨跌幅": "pct_chg",
+        }
+    )
+    df["date"] = pd.to_datetime(df["date"])
+    df = df.sort_values("date").reset_index(drop=True)
+    return df
+
+
+def _fetch_akshare(symbol: str, start_date: str, end_date: str, adjust: str = "qfq"):
+    """
+    数据源 1：AkShare（东方财富）。
+    优势：国内访问快、前复权准确、有成交额和涨跌幅。
+    劣势：海外服务器可能被网络中断。
+    失败返回 None。
+    """
+    max_retries = 2
+    for attempt in range(1, max_retries + 1):
+        try:
+            df = ak.stock_zh_a_hist(
+                symbol=symbol,
+                period="daily",
+                start_date=start_date.replace("-", ""),
+                end_date=end_date.replace("-", ""),
+                adjust=adjust,
+            )
+            if df is not None and not df.empty:
+                return _normalize_akshare(df)
+            return None
+        except Exception:
+            if attempt < max_retries:
+                time.sleep(2 ** attempt)
+            continue
+    return None
+
+
+def _yf_ticker_symbol(symbol: str) -> str:
+    """将 A 股 6 位代码转换为 Yahoo Finance 的 ticker 格式。"""
+    if symbol.startswith("6"):
+        return f"{symbol}.SS"   # 上海证券交易所
+    elif symbol.startswith(("0", "3")):
+        return f"{symbol}.SZ"   # 深圳证券交易所
+    elif symbol.startswith("8"):
+        return f"{symbol}.BJ"   # 北京证券交易所（yfinance 支持有限）
+    return f"{symbol}.SS"
+
+
+def _fetch_yfinance(symbol: str, start_date: str, end_date: str):
+    """
+    数据源 2：Yahoo Finance（yfinance）。
+    优势：海外访问极稳定、无需 token、免费。
+    劣势：auto_adjust 复权与国内前复权算法略有差异；成交额为估算值；
+          北交所股票可能无数据。
+    失败返回 None。
+    """
+    max_retries = 2
+    yf_code = _yf_ticker_symbol(symbol)
+    for attempt in range(1, max_retries + 1):
+        try:
+            ticker = yf.Ticker(yf_code)
+            # yfinance 的 end 参数是 exclusive（不含当日），加一天确保包含结束日
+            end_exclusive = (
+                pd.to_datetime(end_date) + pd.Timedelta(days=1)
+            ).strftime("%Y-%m-%d")
+            df = ticker.history(
+                start=start_date, end=end_exclusive, auto_adjust=True
+            )
+            if df is None or df.empty:
+                return None
+
+            df = df.reset_index()
+            df = df.rename(
+                columns={
+                    "Date": "date", "Open": "open", "High": "high",
+                    "Low": "low", "Close": "close", "Volume": "volume",
+                }
+            )
+            # 去除时区信息
+            df["date"] = pd.to_datetime(df["date"]).dt.tz_localize(None)
+            # yfinance 不直接提供涨跌幅和成交额，自行计算
+            df["pct_chg"] = df["close"].pct_change() * 100
+            df["amount"] = df["close"] * df["volume"]  # 估算成交额
+            df = df[["date", "open", "close", "high", "low", "volume", "amount", "pct_chg"]]
+            df = df.sort_values("date").reset_index(drop=True)
+            df = df.dropna(subset=["close"])
+            return df if not df.empty else None
+
+        except Exception:
+            if attempt < max_retries:
+                time.sleep(2 ** attempt)
+            continue
+    return None
+
+
+# 数据源注册表：按优先级排序，第一个成功返回数据的即被使用
+# 格式：(显示名称, 获取函数)
+DATA_SOURCES = [
+    ("AkShare（东方财富）", _fetch_akshare),
+    ("Yahoo Finance", _fetch_yfinance),
+]
+
+
+@st.cache_data(ttl=3600, show_spinner="正在获取行情数据…")
 def fetch_stock_data(symbol: str, start_date: str, end_date: str, adjust: str = "qfq"):
     """
-    获取 A 股日线行情数据（前复权）。
+    多数据源自动降级获取 A 股日线数据。
 
-    参数
-    ----
-    symbol : str
-        6 位股票代码，如 "600519"
-    start_date : str
-        开始日期，格式 "YYYY-MM-DD"
-    end_date : str
-        结束日期，格式 "YYYY-MM-DD"
-    adjust : str
-        复权方式：qfq=前复权，hfq=后复权，""=不复权
+    依次尝试 DATA_SOURCES 中注册的数据源，返回第一个成功的结果。
+    全部失败时在界面展示各数据源的错误详情。
 
     返回
     ----
-    pd.DataFrame 或 None
-        列：date, open, close, high, low, volume, amount, pct_chg
+    (df, source_name) 或 (None, None)
+        df          : 标准化后的行情 DataFrame
+        source_name : 实际使用的数据源名称（用于界面展示）
     """
-    try:
-        # AkShare 接口要求日期为 "YYYYMMDD" 格式
-        df = ak.stock_zh_a_hist(
-            symbol=symbol,
-            period="daily",
-            start_date=start_date.replace("-", ""),
-            end_date=end_date.replace("-", ""),
-            adjust=adjust,
-        )
-        if df is None or df.empty:
-            return None
+    errors = []
+    for source_name, fetch_fn in DATA_SOURCES:
+        try:
+            if source_name.startswith("AkShare"):
+                df = fetch_fn(symbol, start_date, end_date, adjust)
+            else:
+                df = fetch_fn(symbol, start_date, end_date)
+            if df is not None and not df.empty:
+                return df, source_name
+            errors.append(f"{source_name}：返回空数据")
+        except Exception as e:
+            errors.append(f"{source_name}：{type(e).__name__} — {e}")
+        continue
 
-        # 将 AkShare 返回的中文列名统一为英文
-        df = df.rename(
-            columns={
-                "日期": "date",
-                "开盘": "open",
-                "收盘": "close",
-                "最高": "high",
-                "最低": "low",
-                "成交量": "volume",
-                "成交额": "amount",
-                "涨跌幅": "pct_chg",
-            }
-        )
-        df["date"] = pd.to_datetime(df["date"])
-        df = df.sort_values("date").reset_index(drop=True)
-        return df
-
-    except Exception as e:
-        st.error(f"❌ 数据获取失败：{type(e).__name__} — {e}")
-        return None
+    # 全部数据源失败
+    st.error("❌ 所有数据源均获取失败：")
+    for err in errors:
+        st.text(f"  • {err}")
+    return None, None
 
 
 @st.cache_data(ttl=86400, show_spinner=False)
 def get_stock_name(symbol: str) -> str:
-    """根据股票代码查询股票名称，失败则返回代码本身。"""
+    """根据股票代码查询股票名称。优先 AkShare，失败则仅返回代码。"""
     try:
         name_df = ak.stock_info_a_code_name()
         row = name_df[name_df["code"] == symbol]
@@ -745,8 +843,8 @@ def main():
         st.error("❌ 均线周期格式错误，请用逗号分隔数字，如 5,10,20,60。")
         return
 
-    # ---------- 1. 获取数据 ----------
-    df = fetch_stock_data(symbol, str(start_date), str(end_date))
+    # ---------- 1. 获取数据（多数据源自动降级） ----------
+    df, data_source = fetch_stock_data(symbol, str(start_date), str(end_date))
     if df is None or df.empty:
         st.error("❌ 未获取到数据，请检查股票代码是否正确、日期范围内是否有交易日。")
         return
@@ -793,7 +891,8 @@ def main():
     st.caption(
         f"数据区间：{df['date'].iloc[0].strftime('%Y-%m-%d')} ~ "
         f"{df['date'].iloc[-1].strftime('%Y-%m-%d')} ｜ "
-        f"共 {len(df)} 个交易日 ｜ 策略：{strategy}"
+        f"共 {len(df)} 个交易日 ｜ 策略：{strategy} ｜ "
+        f"数据源：{data_source}"
     )
 
     # --- 绩效指标卡片 ---

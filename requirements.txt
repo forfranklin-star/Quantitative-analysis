@@ -1,9 +1,11 @@
 # A股量化策略分析器 - 依赖清单
 # Python 3.9 - 3.11 （Streamlit Cloud 默认 3.11）
-# 注意：绘图使用 Plotly，不需要 mplfinance，已移除。
+# 多数据源：AkShare（国内）+ yfinance/Yahoo Finance（海外备选）
 
 streamlit>=1.28.0,<2.0
 akshare>=1.14.0,<2.0
+yfinance>=0.2.30,<0.3
 pandas>=2.0,<3.0
 numpy>=1.24,<2.5
 plotly>=5.17,<6.0
+requests>=2.28
