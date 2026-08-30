@@ -1,4 +1,4 @@
-# A股量化策略分析器 - 依赖清单
+# 韩某的A股量化策略分析器/好玩的别当真 - 依赖清单
 # Python 3.9 - 3.11 （Streamlit Cloud 默认 3.11）
 # 多数据源：AkShare（国内）+ yfinance/Yahoo Finance（海外备选）
 

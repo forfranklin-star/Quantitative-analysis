@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-A股量化策略分析器
+韩某的A股量化策略分析器/好玩的别当真
 ==================
 基于 Streamlit + AkShare + Plotly 的交互式股票量化分析与回测工具。
 
@@ -40,7 +40,7 @@ _SESSION.timeout = 15
 # 页面全局配置（必须在所有 st 命令之前调用）
 # ============================================================
 st.set_page_config(
-    page_title="A股量化策略分析器",
+    page_title="韩某的A股量化策略分析器/好玩的别当真",
     page_icon="📈",
     layout="wide",
     initial_sidebar_state="expanded",
@@ -739,7 +739,7 @@ def plot_equity_drawdown(df: pd.DataFrame, init_capital: float) -> go.Figure:
 # 六、Streamlit 主界面
 # ============================================================
 def main():
-    st.title("📈 A股量化策略分析器")
+    st.title("📈 韩某的A股量化策略分析器/好玩的别当真")
     st.caption("AkShare 行情 · 技术指标 · 策略回测 · 交互式可视化")
 
     # ===================== 侧边栏参数 =====================
