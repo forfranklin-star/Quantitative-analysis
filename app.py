@@ -748,7 +748,7 @@ def main():
 
         # --- 股票与日期 ---
         st.subheader("📊 股票与日期")
-        symbol = st.text_input("股票代码", value="600519", help="输入 6 位 A 股代码，如 600519")
+        symbol = st.text_input("股票代码", value="600141", help="输入 6 位 A 股代码，如 600141")
         c1, c2 = st.columns(2)
         with c1:
             start_date = st.date_input("开始日期", value=datetime(2023, 1, 1))
