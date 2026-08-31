@@ -175,10 +175,10 @@
   var MAX_DODGES = 4;
   var HINTS = ["这是好玩的", "别当真", "你真想去啊？", "纯数学，不作任何建议哦！"];
 
-  // 粒子运动参数（慢速）
-  var SPEED_MIN = 0.6;
-  var SPEED_MAX = 1.5;
-  var ROT_MAX   = 0.83;
+  // 粒子运动参数（速度提高 30%）
+  var SPEED_MIN = 0.78;
+  var SPEED_MAX = 1.95;
+  var ROT_MAX   = 1.08;
 
   // 彗星拖尾配置：3 层影子，分别滞后 2/4/6 帧，透明度递减
   var TRAIL_COUNT = 3;
@@ -192,7 +192,6 @@
   var animFrameId = null;
   var isAnimating = false;
   var isReturning = false;   // 是否正在归位动画中
-  var RETURN_LERP = 0.10;    // 归位插值系数（每帧靠近目标的比例）
   var returnCallback = null; // 归位完成后的回调
 
   // ===== 构建 DOM：每个字符 = 容器(主字符 + 3层拖尾) =====
@@ -264,6 +263,8 @@
       p.vy = Math.sin(ang) * spd;
       p.rot = 0;
       p.vrot = (Math.random() - 0.5) * ROT_MAX * 2;
+      p.speed = spd;              // 记录散开速度，归位时使用相同速度
+      p.rotSpeed = Math.abs(p.vrot); // 记录旋转速度
       p.history = [];
       // 预填充历史为原位，避免拖尾初始跳变
       for (var h = 0; h < HISTORY_LEN; h++) {
@@ -349,10 +350,27 @@
     for (var i = 0; i < particles.length; i++) {
       var p = particles[i];
 
-      // 指数插值趋近原点
-      p.x += (0 - p.x) * RETURN_LERP;
-      p.y += (0 - p.y) * RETURN_LERP;
-      p.rot += (0 - p.rot) * RETURN_LERP;
+      // 以固定速度（与散开时相同）直线飞向原点
+      var dx = -p.x;
+      var dy = -p.y;
+      var dist = Math.sqrt(dx * dx + dy * dy);
+
+      if (dist > p.speed) {
+        p.x += (dx / dist) * p.speed;
+        p.y += (dy / dist) * p.speed;
+        allHome = false;
+      } else {
+        p.x = 0;
+        p.y = 0;
+      }
+
+      // 旋转以固定速度归零
+      if (Math.abs(p.rot) > p.rotSpeed) {
+        p.rot += (p.rot > 0 ? -1 : 1) * p.rotSpeed;
+        allHome = false;
+      } else {
+        p.rot = 0;
+      }
 
       // 记录历史（拖尾跟随归位）
       pushHistory(p);
@@ -364,15 +382,9 @@
         var hist = p.history[idx];
         applyTransform(p.trails[t], hist.x, hist.y, hist.rot);
       }
-
-      // 判断是否已接近原位
-      if (Math.abs(p.x) > 0.3 || Math.abs(p.y) > 0.3 || Math.abs(p.rot) > 0.3) {
-        allHome = false;
-      }
     }
 
     if (allHome) {
-      // 所有字符归位完成
       finishReturn();
     } else {
       animFrameId = requestAnimationFrame(returnAnimation);
