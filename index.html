@@ -85,31 +85,57 @@
     cursor: pointer;
   }
 
-  /* 单个字符：transform 由 JS 每帧控制，transition 只控透明度 */
-  .evasive-link .char {
+  /* ===== 字符容器：主字符 + 彗星拖尾 ===== */
+  .char-box {
+    position: relative;
     display: inline-block;
-    transition: opacity 0.3s ease, color 0.3s ease;
+  }
+  /* 主字符 */
+  .char-main {
+    position: relative;
+    z-index: 2;
+    display: inline-block;
+    transition: opacity 0.4s ease, color 0.4s ease;
     will-change: transform;
   }
-  .evasive-link.scattered .char {
-    opacity: 0.2;
+  /* 彗星拖尾：3 层渐隐影子，绝对定位重叠在主字符下方 */
+  .char-trail {
+    position: absolute;
+    top: 0; left: 0;
+    z-index: 1;
+    pointer-events: none;
+    display: inline-block;
+    will-change: transform;
+    transition: opacity 0.4s ease;
+  }
+  /* 散开状态：主字符变淡，拖尾也同步变淡 */
+  .evasive-link.scattered .char-main {
+    opacity: 0.85;
     color: #fff;
   }
+  .evasive-link.scattered .char-trail {
+    opacity: 0;
+  }
 
-  /* ===== 提示文字 ===== */
+  /* ===== 提示文字：弹性淡入淡出 ===== */
   .hint {
     position: absolute;
     top: 50%; left: 50%;
-    transform: translate(-50%, -50%) scale(0.8);
+    /* 初始状态：略小、偏下、透明 */
+    transform: translate(-50%, calc(-50% + 12px)) scale(0.92);
     font-size: clamp(18px, 3vw, 36px);
     font-weight: 800; letter-spacing: 3px;
     color: #FF80AB;
     text-shadow: 0 0 20px rgba(255,128,171,0.6), 0 0 40px rgba(255,64,129,0.3), 0 2px 8px rgba(0,0,0,0.85);
     white-space: nowrap;
-    opacity: 0; pointer-events: none;
-    transition: opacity 0.3s ease, transform 0.3s cubic-bezier(0.34,1.56,0.64,1);
+    opacity: 0;
+    pointer-events: none;
+    /* 渐隐渐现：弹性缓动 */
+    transition: opacity 0.5s cubic-bezier(0.22, 1, 0.36, 1),
+                transform 0.5s cubic-bezier(0.34, 1.56, 0.64, 1);
     z-index: 5;
   }
+  /* 显示状态：正常大小、居中、不透明 */
   .hint.show {
     opacity: 1;
     transform: translate(-50%, -50%) scale(1);
@@ -142,17 +168,23 @@
 (function () {
   "use strict";
 
-  var link    = document.getElementById("evasiveLink");
-  var hint    = document.getElementById("hint");
+  var link = document.getElementById("evasiveLink");
+  var hint = document.getElementById("hint");
 
   // 前 4 次躲避，第 5 次起锁定
   var MAX_DODGES = 4;
   var HINTS = ["这是好玩的", "别当真", "你真想去啊？", "纯数学，不作任何建议哦！"];
 
-  // 粒子运动参数（原速度的 1/3）
+  // 粒子运动参数（慢速）
   var SPEED_MIN = 0.6;
   var SPEED_MAX = 1.5;
   var ROT_MAX   = 0.83;
+
+  // 彗星拖尾配置：3 层影子，分别滞后 2/4/6 帧，透明度递减
+  var TRAIL_COUNT = 3;
+  var TRAIL_LAG   = [2, 4, 6];
+  var TRAIL_OPACITY = [0.35, 0.22, 0.12];
+  var HISTORY_LEN = 8; // 位置历史长度
 
   var dodgeCount  = 0;
   var isLocked    = false;
@@ -160,24 +192,54 @@
   var animFrameId = null;
   var isAnimating = false;
 
-  // 拆分链接为单字符
+  // ===== 构建 DOM：每个字符 = 容器(主字符 + 3层拖尾) =====
   var rawText = link.textContent;
   link.textContent = "";
-  var charSpans = [];
+
   for (var i = 0; i < rawText.length; i++) {
-    var s = document.createElement("span");
-    s.className = "char";
-    s.textContent = rawText[i] === " " ? "\u00A0" : rawText[i];
-    link.appendChild(s);
-    charSpans.push(s);
+    var ch = rawText[i] === " " ? "\u00A0" : rawText[i];
+
+    // 容器
+    var box = document.createElement("span");
+    box.className = "char-box";
+
+    // 3 层拖尾（先创建，在底层）
+    var trails = [];
+    for (var t = 0; t < TRAIL_COUNT; t++) {
+      var tr = document.createElement("span");
+      tr.className = "char-trail";
+      tr.textContent = ch;
+      tr.style.opacity = TRAIL_OPACITY[t];
+      box.appendChild(tr);
+      trails.push(tr);
+    }
+
+    // 主字符（在顶层）
+    var main = document.createElement("span");
+    main.className = "char-main";
+    main.textContent = ch;
+    box.appendChild(main);
+
+    link.appendChild(box);
+
+    // 粒子状态
+    particles.push({
+      box: box,
+      main: main,
+      trails: trails,
+      x: 0, y: 0,
+      vx: 0, vy: 0,
+      rot: 0, vrot: 0,
+      history: []  // 位置历史，用于拖尾
+    });
   }
 
-  // 碰撞边界：整个视口（以链接中心为原点，计算到四边的距离）
+  // ===== 碰撞边界：整个视口 =====
   function getBounds() {
     var rect = link.getBoundingClientRect();
     var cx = rect.left + rect.width / 2;
     var cy = rect.top + rect.height / 2;
-    var pad = 16; // 距屏幕边缘留 16px
+    var pad = 16;
     return {
       left:   -cx + pad,
       right:  window.innerWidth - cx - pad,
@@ -186,50 +248,78 @@
     };
   }
 
-  // 初始化粒子：在整个视口内随机位置 + 随机速度
+  // ===== 初始化粒子：从原位开始，给随机初速度（自然飞散，非瞬移） =====
   function initParticles() {
     var b = getBounds();
-    particles = charSpans.map(function (el) {
+    for (var i = 0; i < particles.length; i++) {
+      var p = particles[i];
       var ang = Math.random() * Math.PI * 2;
       var spd = SPEED_MIN + Math.random() * (SPEED_MAX - SPEED_MIN);
-      return {
-        el: el,
-        x: b.left + Math.random() * (b.right - b.left),
-        y: b.top + Math.random() * (b.bottom - b.top),
-        vx: Math.cos(ang) * spd,
-        vy: Math.sin(ang) * spd,
-        rot: (Math.random() - 0.5) * 60,
-        vrot: (Math.random() - 0.5) * ROT_MAX * 2
-      };
-    });
+      p.x = 0;
+      p.y = 0;
+      p.vx = Math.cos(ang) * spd;
+      p.vy = Math.sin(ang) * spd;
+      p.rot = 0;
+      p.vrot = (Math.random() - 0.5) * ROT_MAX * 2;
+      p.history = [];
+      // 预填充历史为原位，避免拖尾初始跳变
+      for (var h = 0; h < HISTORY_LEN; h++) {
+        p.history.push({ x: 0, y: 0, rot: 0 });
+      }
+    }
   }
 
-  // 动画循环：持续运动 + 视口边缘反射碰撞
+  // ===== 记录位置历史 =====
+  function pushHistory(p) {
+    p.history.unshift({ x: p.x, y: p.y, rot: p.rot });
+    if (p.history.length > HISTORY_LEN) {
+      p.history.pop();
+    }
+  }
+
+  // ===== 应用变换到主字符和拖尾 =====
+  function applyTransform(el, x, y, rot) {
+    el.style.transform =
+      "translate(" + x.toFixed(1) + "px," + y.toFixed(1) + "px) rotate(" + rot.toFixed(1) + "deg)";
+  }
+
+  // ===== 动画循环 =====
   function animate() {
     if (!isAnimating) return;
     var b = getBounds();
 
     for (var i = 0; i < particles.length; i++) {
       var p = particles[i];
+
+      // 更新位置
       p.x += p.vx;
       p.y += p.vy;
       p.rot += p.vrot;
 
-      // 左右边缘反射
-      if (p.x > b.right)       { p.x = b.right; p.vx = -Math.abs(p.vx); }
-      else if (p.x < b.left)   { p.x = b.left;  p.vx =  Math.abs(p.vx); }
+      // 视口边缘反射
+      if (p.x > b.right)     { p.x = b.right; p.vx = -Math.abs(p.vx); }
+      else if (p.x < b.left) { p.x = b.left;  p.vx =  Math.abs(p.vx); }
+      if (p.y > b.bottom)    { p.y = b.bottom; p.vy = -Math.abs(p.vy); }
+      else if (p.y < b.top)  { p.y = b.top;    p.vy =  Math.abs(p.vy); }
 
-      // 上下边缘反射
-      if (p.y > b.bottom)      { p.y = b.bottom; p.vy = -Math.abs(p.vy); }
-      else if (p.y < b.top)    { p.y = b.top;    p.vy =  Math.abs(p.vy); }
+      // 记录历史
+      pushHistory(p);
 
-      p.el.style.transform =
-        "translate(" + p.x.toFixed(1) + "px," + p.y.toFixed(1) + "px) rotate(" + p.rot.toFixed(1) + "deg)";
+      // 主字符用当前位置
+      applyTransform(p.main, p.x, p.y, p.rot);
+
+      // 拖尾用滞后的历史位置
+      for (var t = 0; t < TRAIL_COUNT; t++) {
+        var idx = Math.min(TRAIL_LAG[t], p.history.length - 1);
+        var hist = p.history[idx];
+        applyTransform(p.trails[t], hist.x, hist.y, hist.rot);
+      }
     }
+
     animFrameId = requestAnimationFrame(animate);
   }
 
-  // 启动散开动画
+  // ===== 启动散开动画 =====
   function scatter() {
     stopAnim();
     link.classList.add("scattered");
@@ -238,14 +328,17 @@
     animate();
   }
 
-  // 停止动画并复原
+  // ===== 停止动画并复原（主字符+所有拖尾归位） =====
   function reset() {
     stopAnim();
     link.classList.remove("scattered");
-    for (var i = 0; i < charSpans.length; i++) {
-      charSpans[i].style.transform = "";
+    for (var i = 0; i < particles.length; i++) {
+      var p = particles[i];
+      applyTransform(p.main, 0, 0, 0);
+      for (var t = 0; t < TRAIL_COUNT; t++) {
+        applyTransform(p.trails[t], 0, 0, 0);
+      }
     }
-    particles = [];
   }
 
   function stopAnim() {
@@ -256,11 +349,21 @@
     }
   }
 
-  function showHint(t) { hint.textContent = t; hint.classList.add("show"); }
-  function hideHint() { hint.classList.remove("show"); }
-  function lockLink() { link.classList.add("locked"); }
+  // ===== 提示文字 =====
+  function showHint(t) {
+    hint.textContent = t;
+    // 强制重排，确保 transition 生效
+    void hint.offsetWidth;
+    hint.classList.add("show");
+  }
+  function hideHint() {
+    hint.classList.remove("show");
+  }
+  function lockLink() {
+    link.classList.add("locked");
+  }
 
-  // 鼠标进入
+  // ===== 鼠标进入 =====
   link.addEventListener("mouseenter", function () {
     if (isLocked) return;
     dodgeCount++;
@@ -268,7 +371,7 @@
     scatter();
   });
 
-  // 鼠标离开
+  // ===== 鼠标离开 =====
   link.addEventListener("mouseleave", function () {
     if (isLocked) return;
     reset();
@@ -279,7 +382,7 @@
     }
   });
 
-  // 点击
+  // ===== 点击 =====
   link.addEventListener("click", function (e) {
     if (!isLocked) {
       e.preventDefault();
@@ -288,7 +391,7 @@
     }
   });
 
-  // 触摸设备
+  // ===== 触摸设备 =====
   link.addEventListener("touchstart", function (e) {
     if (isLocked) return;
     dodgeCount++;
