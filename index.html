@@ -191,6 +191,9 @@
   var particles   = [];
   var animFrameId = null;
   var isAnimating = false;
+  var isReturning = false;   // 是否正在归位动画中
+  var RETURN_LERP = 0.10;    // 归位插值系数（每帧靠近目标的比例）
+  var returnCallback = null; // 归位完成后的回调
 
   // ===== 构建 DOM：每个字符 = 容器(主字符 + 3层拖尾) =====
   var rawText = link.textContent;
@@ -322,18 +325,95 @@
   // ===== 启动散开动画 =====
   function scatter() {
     stopAnim();
+    stopReturn();
     link.classList.add("scattered");
     initParticles();
     isAnimating = true;
     animate();
   }
 
-  // ===== 停止动画并复原（主字符+所有拖尾归位） =====
-  function reset() {
+  // ===== 平滑归位动画：字符从当前位置插值回到原位 =====
+  function startReturn(callback) {
+    if (isReturning) return;
     stopAnim();
+    isReturning = true;
+    returnCallback = callback || null;
+    returnAnimation();
+  }
+
+  function returnAnimation() {
+    if (!isReturning) return;
+
+    var allHome = true;
+
+    for (var i = 0; i < particles.length; i++) {
+      var p = particles[i];
+
+      // 指数插值趋近原点
+      p.x += (0 - p.x) * RETURN_LERP;
+      p.y += (0 - p.y) * RETURN_LERP;
+      p.rot += (0 - p.rot) * RETURN_LERP;
+
+      // 记录历史（拖尾跟随归位）
+      pushHistory(p);
+
+      // 应用变换
+      applyTransform(p.main, p.x, p.y, p.rot);
+      for (var t = 0; t < TRAIL_COUNT; t++) {
+        var idx = Math.min(TRAIL_LAG[t], p.history.length - 1);
+        var hist = p.history[idx];
+        applyTransform(p.trails[t], hist.x, hist.y, hist.rot);
+      }
+
+      // 判断是否已接近原位
+      if (Math.abs(p.x) > 0.3 || Math.abs(p.y) > 0.3 || Math.abs(p.rot) > 0.3) {
+        allHome = false;
+      }
+    }
+
+    if (allHome) {
+      // 所有字符归位完成
+      finishReturn();
+    } else {
+      animFrameId = requestAnimationFrame(returnAnimation);
+    }
+  }
+
+  function finishReturn() {
+    isReturning = false;
+    animFrameId = null;
+    // 精确归零
+    for (var i = 0; i < particles.length; i++) {
+      var p = particles[i];
+      p.x = 0; p.y = 0; p.rot = 0;
+      applyTransform(p.main, 0, 0, 0);
+      for (var t = 0; t < TRAIL_COUNT; t++) {
+        applyTransform(p.trails[t], 0, 0, 0);
+      }
+    }
+    // 恢复正常显示
+    link.classList.remove("scattered");
+    // 执行回调（如锁定链接）
+    if (returnCallback) {
+      var cb = returnCallback;
+      returnCallback = null;
+      cb();
+    }
+  }
+
+  function stopReturn() {
+    isReturning = false;
+    returnCallback = null;
+  }
+
+  // ===== 瞬间复原（仅用于需要立即重置的场景） =====
+  function resetInstant() {
+    stopAnim();
+    stopReturn();
     link.classList.remove("scattered");
     for (var i = 0; i < particles.length; i++) {
       var p = particles[i];
+      p.x = 0; p.y = 0; p.rot = 0;
       applyTransform(p.main, 0, 0, 0);
       for (var t = 0; t < TRAIL_COUNT; t++) {
         applyTransform(p.trails[t], 0, 0, 0);
@@ -371,15 +451,17 @@
     scatter();
   });
 
-  // ===== 鼠标离开 =====
+  // ===== 鼠标离开：平滑归位 + 提示渐隐 =====
   link.addEventListener("mouseleave", function () {
     if (isLocked) return;
-    reset();
-    hideHint();
-    if (dodgeCount >= MAX_DODGES) {
-      isLocked = true;
-      lockLink();
-    }
+    hideHint();  // 提示文字立即开始渐隐（CSS transition 处理）
+    // 字符平滑归位，归位完成后判断是否锁定
+    startReturn(function () {
+      if (dodgeCount >= MAX_DODGES) {
+        isLocked = true;
+        lockLink();
+      }
+    });
   });
 
   // ===== 点击 =====
@@ -403,12 +485,13 @@
   link.addEventListener("touchend", function () {
     if (isLocked) return;
     setTimeout(function () {
-      reset();
       hideHint();
-      if (dodgeCount >= MAX_DODGES) {
-        isLocked = true;
-        lockLink();
-      }
+      startReturn(function () {
+        if (dodgeCount >= MAX_DODGES) {
+          isLocked = true;
+          lockLink();
+        }
+      });
     }, 1800);
   });
 
