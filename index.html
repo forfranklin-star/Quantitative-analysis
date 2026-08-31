@@ -458,6 +458,12 @@
   // ===== 鼠标进入 =====
   link.addEventListener("mouseenter", function () {
     if (isLocked) return;
+    // 已达到最大躲避次数：锁定，不再躲避（不依赖异步归位回调）
+    if (dodgeCount >= MAX_DODGES) {
+      isLocked = true;
+      lockLink();
+      return;
+    }
     dodgeCount++;
     if (dodgeCount <= HINTS.length) showHint(HINTS[dodgeCount - 1]);
     scatter();
@@ -466,14 +472,8 @@
   // ===== 鼠标离开：平滑归位 + 提示渐隐 =====
   link.addEventListener("mouseleave", function () {
     if (isLocked) return;
-    hideHint();  // 提示文字立即开始渐隐（CSS transition 处理）
-    // 字符平滑归位，归位完成后判断是否锁定
-    startReturn(function () {
-      if (dodgeCount >= MAX_DODGES) {
-        isLocked = true;
-        lockLink();
-      }
-    });
+    hideHint();
+    startReturn();  // 仅归位，锁定逻辑在 mouseenter 中判断
   });
 
   // ===== 点击 =====
@@ -488,6 +488,11 @@
   // ===== 触摸设备 =====
   link.addEventListener("touchstart", function (e) {
     if (isLocked) return;
+    if (dodgeCount >= MAX_DODGES) {
+      isLocked = true;
+      lockLink();
+      return;
+    }
     dodgeCount++;
     if (dodgeCount <= HINTS.length) showHint(HINTS[dodgeCount - 1]);
     scatter();
@@ -498,12 +503,7 @@
     if (isLocked) return;
     setTimeout(function () {
       hideHint();
-      startReturn(function () {
-        if (dodgeCount >= MAX_DODGES) {
-          isLocked = true;
-          lockLink();
-        }
-      });
+      startReturn();
     }, 1800);
   });
 
