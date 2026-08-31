@@ -115,14 +115,6 @@
     transform: translate(-50%, -50%) scale(1);
   }
 
-  /* ===== 底部 ===== */
-  .footer {
-    position: fixed; bottom: 24px; left: 50%;
-    transform: translateX(-50%); z-index: 2;
-    font-size: 13px; color: rgba(255,255,255,0.35);
-    letter-spacing: 2px; font-weight: 300;
-  }
-
   @media (max-width: 640px) {
     .content { gap: 24px; }
     .line1 { letter-spacing: 3px; }
@@ -146,8 +138,6 @@
   </div>
 </div>
 
-<div class="footer">纯数学，不作任何建议</div>
-
 <script>
 (function () {
   "use strict";
@@ -159,10 +149,10 @@
   var MAX_DODGES = 4;
   var HINTS = ["这是好玩的", "别当真", "你真想去啊？", "纯数学，不作任何建议哦！"];
 
-  // 粒子运动参数
-  var SPEED_MIN = 1.8;
-  var SPEED_MAX = 4.5;
-  var ROT_MAX   = 2.5;
+  // 粒子运动参数（原速度的 1/3）
+  var SPEED_MIN = 0.6;
+  var SPEED_MAX = 1.5;
+  var ROT_MAX   = 0.83;
 
   var dodgeCount  = 0;
   var isLocked    = false;
@@ -182,15 +172,21 @@
     charSpans.push(s);
   }
 
-  // 动态碰撞边界（以链接中心为原点）
+  // 碰撞边界：整个视口（以链接中心为原点，计算到四边的距离）
   function getBounds() {
+    var rect = link.getBoundingClientRect();
+    var cx = rect.left + rect.width / 2;
+    var cy = rect.top + rect.height / 2;
+    var pad = 16; // 距屏幕边缘留 16px
     return {
-      x: Math.min(window.innerWidth * 0.42, 560),
-      y: Math.min(window.innerHeight * 0.30, 300)
+      left:   -cx + pad,
+      right:  window.innerWidth - cx - pad,
+      top:    -cy + pad,
+      bottom: window.innerHeight - cy - pad
     };
   }
 
-  // 初始化粒子：随机位置 + 随机速度 + 随机旋转
+  // 初始化粒子：在整个视口内随机位置 + 随机速度
   function initParticles() {
     var b = getBounds();
     particles = charSpans.map(function (el) {
@@ -198,8 +194,8 @@
       var spd = SPEED_MIN + Math.random() * (SPEED_MAX - SPEED_MIN);
       return {
         el: el,
-        x: (Math.random() - 0.5) * b.x * 0.5,
-        y: (Math.random() - 0.5) * b.y * 0.5,
+        x: b.left + Math.random() * (b.right - b.left),
+        y: b.top + Math.random() * (b.bottom - b.top),
         vx: Math.cos(ang) * spd,
         vy: Math.sin(ang) * spd,
         rot: (Math.random() - 0.5) * 60,
@@ -208,7 +204,7 @@
     });
   }
 
-  // 动画循环：持续运动 + 边界反射碰撞
+  // 动画循环：持续运动 + 视口边缘反射碰撞
   function animate() {
     if (!isAnimating) return;
     var b = getBounds();
@@ -219,13 +215,13 @@
       p.y += p.vy;
       p.rot += p.vrot;
 
-      // 左右边界反射
-      if (p.x > b.x) { p.x = b.x; p.vx = -Math.abs(p.vx); }
-      else if (p.x < -b.x) { p.x = -b.x; p.vx = Math.abs(p.vx); }
+      // 左右边缘反射
+      if (p.x > b.right)       { p.x = b.right; p.vx = -Math.abs(p.vx); }
+      else if (p.x < b.left)   { p.x = b.left;  p.vx =  Math.abs(p.vx); }
 
-      // 上下边界反射
-      if (p.y > b.y) { p.y = b.y; p.vy = -Math.abs(p.vy); }
-      else if (p.y < -b.y) { p.y = -b.y; p.vy = Math.abs(p.vy); }
+      // 上下边缘反射
+      if (p.y > b.bottom)      { p.y = b.bottom; p.vy = -Math.abs(p.vy); }
+      else if (p.y < b.top)    { p.y = b.top;    p.vy =  Math.abs(p.vy); }
 
       p.el.style.transform =
         "translate(" + p.x.toFixed(1) + "px," + p.y.toFixed(1) + "px) rotate(" + p.rot.toFixed(1) + "deg)";
