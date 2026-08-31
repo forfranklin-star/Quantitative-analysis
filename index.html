@@ -14,7 +14,6 @@
     -webkit-user-select: none;
   }
 
-  /* 背景 */
   .bg {
     position: fixed; inset: 0;
     background-image: url("https://aka.doubaocdn.com/s/tenWwlOUAm");
@@ -31,7 +30,6 @@
     z-index: 1;
   }
 
-  /* 内容 */
   .content {
     position: relative; z-index: 2;
     width: 100%; height: 100%;
@@ -52,10 +50,14 @@
     50%     { text-shadow: 0 0 40px rgba(255,213,79,0.75), 0 0 80px rgba(255,152,0,0.35), 0 3px 12px rgba(0,0,0,0.85); }
   }
 
+  /* 链接容器：相对定位，容纳遮罩层 */
   .link-wrapper {
-    position: relative; display: inline-block;
+    position: relative;
+    display: inline-block;
     padding: 16px 28px;
   }
+
+  /* 真正的链接文字：散开后 pointer-events:none，不干扰鼠标 */
   .evasive-link {
     position: relative;
     font-size: clamp(17px, 2.8vw, 34px);
@@ -64,10 +66,9 @@
     text-decoration-color: rgba(77,208,225,0.5);
     text-underline-offset: 8px;
     text-shadow: 0 0 18px rgba(77,208,225,0.5), 0 2px 8px rgba(0,0,0,0.85);
-    cursor: pointer; display: inline-block;
+    display: inline-block;
     white-space: nowrap; letter-spacing: 1px;
-  }
-  .evasive-link:not(.locked) {
+    pointer-events: none;
     animation: linkGlow 2.5s ease-in-out infinite;
   }
   @keyframes linkGlow {
@@ -79,9 +80,20 @@
     text-decoration-color: rgba(105,240,174,0.7);
     text-shadow: 0 0 20px rgba(105,240,174,0.6), 0 2px 8px rgba(0,0,0,0.85);
     animation: none;
+    pointer-events: auto;
+    cursor: pointer;
   }
 
-  /* 字符容器 */
+  /* 透明遮罩层：固定位置，专门接收鼠标事件，不受字符飞散影响 */
+  .hover-mask {
+    position: absolute;
+    top: 0; left: 0;
+    width: 100%; height: 100%;
+    z-index: 10;
+    cursor: default;
+  }
+  .hover-mask.hidden { display: none; }
+
   .char-box { position: relative; display: inline-block; }
   .char-main {
     position: relative; z-index: 2;
@@ -97,7 +109,6 @@
   }
   .evasive-link.scattered .char-main { opacity: 0.85; color: #fff; }
 
-  /* 提示文字 */
   .hint {
     position: absolute;
     top: 50%; left: 50%;
@@ -132,10 +143,11 @@
 
 <div class="content">
   <div class="line1">本程序已停用，请移步</div>
-  <div class="link-wrapper">
+  <div class="link-wrapper" id="linkWrapper">
     <a href="https://nkyizvm5ktfmmkuuxwdprd.streamlit.app/"
        class="evasive-link" id="evasiveLink"
        target="_blank" rel="noopener noreferrer">https://nkyizvm5ktfmmkuuxwdprd.streamlit.app/</a>
+    <div class="hover-mask" id="hoverMask"></div>
     <div class="hint" id="hint"></div>
   </div>
 </div>
@@ -144,42 +156,36 @@
 (function () {
   "use strict";
 
-  // ===== DOM =====
   var link = document.getElementById("evasiveLink");
+  var mask = document.getElementById("hoverMask");
   var hint = document.getElementById("hint");
 
-  // ===== 常量 =====
   var MAX_DODGES = 4;
   var HINTS = ["这是好玩的", "别当真", "你真想去啊？", "纯数学，不作任何建议哦！"];
 
-  // 速度（比最初版提速 30%）
   var SPEED_MIN = 0.78;
   var SPEED_MAX = 1.95;
   var ROT_MAX   = 1.08;
 
-  // 彗星拖尾：3 层，分别滞后 2/4/6 帧
   var TRAIL_COUNT = 3;
   var TRAIL_LAG   = [2, 4, 6];
   var TRAIL_OPACITY = [0.35, 0.22, 0.12];
   var HISTORY_LEN = 8;
 
-  // ===== 状态机 =====
-  var STATE = { IDLE: "idle", SCATTERING: "scattering", RETURNING: "returning", LOCKED: "locked" };
-  var state = STATE.IDLE;
+  // 状态机
+  var S = { IDLE: "idle", FLYING: "flying", HOMING: "homing", LOCKED: "locked" };
+  var state = S.IDLE;
   var dodgeCount = 0;
-
-  // ===== 粒子系统 =====
-  var particles = [];
   var rafId = null;
 
-  // 构建 DOM：每个字符 = 容器(主字符 + 3层拖尾)
+  // 粒子
+  var particles = [];
   var rawText = link.textContent;
   link.textContent = "";
   for (var i = 0; i < rawText.length; i++) {
     var ch = rawText[i] === " " ? "\u00A0" : rawText[i];
     var box = document.createElement("span");
     box.className = "char-box";
-
     var trails = [];
     for (var t = 0; t < TRAIL_COUNT; t++) {
       var tr = document.createElement("span");
@@ -189,17 +195,13 @@
       box.appendChild(tr);
       trails.push(tr);
     }
-
     var main = document.createElement("span");
     main.className = "char-main";
     main.textContent = ch;
     box.appendChild(main);
-
     link.appendChild(box);
-
     particles.push({
-      main: main,
-      trails: trails,
+      main: main, trails: trails,
       x: 0, y: 0, rot: 0,
       vx: 0, vy: 0, vrot: 0,
       speed: 0, rotSpeed: 0,
@@ -207,21 +209,17 @@
     });
   }
 
-  // ===== 碰撞边界：整个视口 =====
   function getBounds() {
     var rect = link.getBoundingClientRect();
     var cx = rect.left + rect.width / 2;
     var cy = rect.top + rect.height / 2;
     var pad = 16;
     return {
-      left: -cx + pad,
-      right: window.innerWidth - cx - pad,
-      top: -cy + pad,
-      bottom: window.innerHeight - cy - pad
+      left: -cx + pad, right: window.innerWidth - cx - pad,
+      top: -cy + pad, bottom: window.innerHeight - cy - pad
     };
   }
 
-  // ===== 初始化粒子：从原位开始，随机初速度 =====
   function initParticles() {
     for (var i = 0; i < particles.length; i++) {
       var p = particles[i];
@@ -234,65 +232,56 @@
       p.speed = spd;
       p.rotSpeed = Math.abs(p.vrot);
       p.history = [];
-      for (var h = 0; h < HISTORY_LEN; h++) {
-        p.history.push({ x: 0, y: 0, rot: 0 });
-      }
+      for (var h = 0; h < HISTORY_LEN; h++) p.history.push({ x: 0, y: 0, rot: 0 });
     }
   }
 
-  function pushHistory(p) {
+  function pushHist(p) {
     p.history.unshift({ x: p.x, y: p.y, rot: p.rot });
     if (p.history.length > HISTORY_LEN) p.history.pop();
   }
 
-  function applyTransform(el, x, y, rot) {
-    el.style.transform =
-      "translate(" + x.toFixed(1) + "px," + y.toFixed(1) + "px) rotate(" + rot.toFixed(1) + "deg)";
+  function setT(el, x, y, r) {
+    el.style.transform = "translate(" + x.toFixed(1) + "px," + y.toFixed(1) + "px) rotate(" + r.toFixed(1) + "deg)";
   }
 
-  function renderParticles() {
+  function render() {
     for (var i = 0; i < particles.length; i++) {
       var p = particles[i];
-      applyTransform(p.main, p.x, p.y, p.rot);
+      setT(p.main, p.x, p.y, p.rot);
       for (var t = 0; t < TRAIL_COUNT; t++) {
         var idx = Math.min(TRAIL_LAG[t], p.history.length - 1);
-        var hist = p.history[idx];
-        applyTransform(p.trails[t], hist.x, hist.y, hist.rot);
+        setT(p.trails[t], p.history[idx].x, p.history[idx].y, p.history[idx].rot);
       }
     }
   }
 
-  function resetParticles() {
+  function resetPos() {
     for (var i = 0; i < particles.length; i++) {
       var p = particles[i];
       p.x = 0; p.y = 0; p.rot = 0;
-      applyTransform(p.main, 0, 0, 0);
-      for (var t = 0; t < TRAIL_COUNT; t++) {
-        applyTransform(p.trails[t], 0, 0, 0);
-      }
+      setT(p.main, 0, 0, 0);
+      for (var t = 0; t < TRAIL_COUNT; t++) setT(p.trails[t], 0, 0, 0);
     }
   }
 
-  // ===== 单一动画循环 =====
+  // 单一动画循环
   function tick() {
-    if (state === STATE.SCATTERING) {
+    if (state === S.FLYING) {
       var b = getBounds();
       for (var i = 0; i < particles.length; i++) {
         var p = particles[i];
-        p.x += p.vx;
-        p.y += p.vy;
-        p.rot += p.vrot;
-        if (p.x > b.right)      { p.x = b.right; p.vx = -Math.abs(p.vx); }
-        else if (p.x < b.left)  { p.x = b.left;  p.vx =  Math.abs(p.vx); }
-        if (p.y > b.bottom)     { p.y = b.bottom; p.vy = -Math.abs(p.vy); }
-        else if (p.y < b.top)   { p.y = b.top;    p.vy =  Math.abs(p.vy); }
-        pushHistory(p);
+        p.x += p.vx; p.y += p.vy; p.rot += p.vrot;
+        if (p.x > b.right) { p.x = b.right; p.vx = -Math.abs(p.vx); }
+        else if (p.x < b.left) { p.x = b.left; p.vx = Math.abs(p.vx); }
+        if (p.y > b.bottom) { p.y = b.bottom; p.vy = -Math.abs(p.vy); }
+        else if (p.y < b.top) { p.y = b.top; p.vy = Math.abs(p.vy); }
+        pushHist(p);
       }
-      renderParticles();
+      render();
       rafId = requestAnimationFrame(tick);
-
-    } else if (state === STATE.RETURNING) {
-      var allHome = true;
+    } else if (state === S.HOMING) {
+      var done = true;
       for (var j = 0; j < particles.length; j++) {
         var q = particles[j];
         var dx = -q.x, dy = -q.y;
@@ -300,105 +289,85 @@
         if (dist > q.speed) {
           q.x += (dx / dist) * q.speed;
           q.y += (dy / dist) * q.speed;
-          allHome = false;
-        } else {
-          q.x = 0; q.y = 0;
-        }
+          done = false;
+        } else { q.x = 0; q.y = 0; }
         if (Math.abs(q.rot) > q.rotSpeed) {
           q.rot += (q.rot > 0 ? -1 : 1) * q.rotSpeed;
-          allHome = false;
-        } else {
-          q.rot = 0;
-        }
-        pushHistory(q);
+          done = false;
+        } else { q.rot = 0; }
+        pushHist(q);
       }
-      renderParticles();
-      if (allHome) {
-        finishReturn();
-      } else {
-        rafId = requestAnimationFrame(tick);
-      }
+      render();
+      if (done) { doHome(); }
+      else { rafId = requestAnimationFrame(tick); }
     }
   }
 
-  // ===== 状态转换 =====
-  function startScatter() {
+  function fly() {
     if (rafId !== null) { cancelAnimationFrame(rafId); rafId = null; }
-    state = STATE.SCATTERING;
+    state = S.FLYING;
     initParticles();
     link.classList.add("scattered");
     rafId = requestAnimationFrame(tick);
   }
 
-  function startReturn() {
-    if (state !== STATE.SCATTERING) return;
-    state = STATE.RETURNING;
-    // 动画循环已在运行，tick 会自动切换到 returning 逻辑
+  function home() {
+    if (state !== S.FLYING) return;
+    state = S.HOMING;
   }
 
-  function finishReturn() {
-    state = STATE.IDLE;
+  function doHome() {
+    state = S.IDLE;
     if (rafId !== null) { cancelAnimationFrame(rafId); rafId = null; }
-    resetParticles();
+    resetPos();
     link.classList.remove("scattered");
   }
 
-  function lockLink() {
-    state = STATE.LOCKED;
+  function lock() {
+    state = S.LOCKED;
     if (rafId !== null) { cancelAnimationFrame(rafId); rafId = null; }
-    resetParticles();
+    resetPos();
     link.classList.remove("scattered");
     link.classList.add("locked");
+    mask.classList.add("hidden");
   }
 
-  // ===== 提示文字 =====
-  function showHint(t) {
-    hint.textContent = t;
-    void hint.offsetWidth; // 强制重排
-    hint.classList.add("show");
-  }
-  function hideHint() {
-    hint.classList.remove("show");
-  }
+  function showHint(t) { hint.textContent = t; void hint.offsetWidth; hint.classList.add("show"); }
+  function hideHint() { hint.classList.remove("show"); }
 
-  // ===== 核心交互：进入/离开 =====
-  function handleEnter() {
-    if (state === STATE.LOCKED) return;
-    if (state === STATE.SCATTERING) return; // 已在散开，忽略
-    if (dodgeCount >= MAX_DODGES) {
-      lockLink();
-      return;
-    }
+  // ===== 核心：遮罩层接收鼠标事件，完全隔离字符飞散的影响 =====
+  mask.addEventListener("mouseenter", function () {
+    if (state === S.LOCKED || state === S.FLYING) return;
+    if (dodgeCount >= MAX_DODGES) { lock(); return; }
     dodgeCount++;
     if (dodgeCount <= HINTS.length) showHint(HINTS[dodgeCount - 1]);
-    startScatter();
-  }
-
-  function handleLeave() {
-    if (state === STATE.LOCKED) return;
-    hideHint();
-    if (state === STATE.SCATTERING) {
-      startReturn();
-    }
-  }
-
-  // 鼠标事件
-  link.addEventListener("mouseenter", handleEnter);
-  link.addEventListener("mouseleave", handleLeave);
-
-  // 触摸事件（preventDefault 阻止模拟鼠标事件）
-  link.addEventListener("touchstart", function (e) {
-    e.preventDefault();
-    handleEnter();
-  }, { passive: false });
-
-  link.addEventListener("touchend", function () {
-    setTimeout(handleLeave, 1500);
+    fly();
   });
 
-  // 点击：仅锁定后可跳转
+  mask.addEventListener("mouseleave", function () {
+    if (state === S.LOCKED) return;
+    hideHint();
+    if (state === S.FLYING) home();
+  });
+
+  // 触摸设备
+  mask.addEventListener("touchstart", function (e) {
+    e.preventDefault();
+    if (state === S.LOCKED || state === S.FLYING) return;
+    if (dodgeCount >= MAX_DODGES) { lock(); return; }
+    dodgeCount++;
+    if (dodgeCount <= HINTS.length) showHint(HINTS[dodgeCount - 1]);
+    fly();
+  }, { passive: false });
+
+  mask.addEventListener("touchend", function () {
+    if (state === S.LOCKED) return;
+    setTimeout(function () { hideHint(); if (state === S.FLYING) home(); }, 1500);
+  });
+
+  // 锁定后链接可点击
   link.addEventListener("click", function (e) {
-    if (state !== STATE.LOCKED) {
+    if (state !== S.LOCKED) {
       e.preventDefault();
       e.stopPropagation();
       return false;
