@@ -1,0 +1,379 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>本程序已停用</title>
+<style>
+  /* ===== 全局重置 ===== */
+  * {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+  }
+
+  html, body {
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+  }
+
+  body {
+    font-family: "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei",
+                 "Helvetica Neue", Arial, sans-serif;
+    background: #1a0f00;
+    user-select: none;
+    -webkit-user-select: none;
+  }
+
+  /* ===== 背景层 ===== */
+  .bg {
+    position: fixed;
+    inset: 0;
+    background-image: url("https://aka.doubaocdn.com/s/tenWwlOUAm");
+    background-size: cover;
+    background-position: center;
+    z-index: 0;
+  }
+
+  /* 渐变遮罩：左侧暖棕、右侧冷蓝，增强文字对比度同时保留氛围 */
+  .overlay {
+    position: fixed;
+    inset: 0;
+    background:
+      radial-gradient(ellipse at 30% 50%, rgba(60, 25, 0, 0.45) 0%, transparent 60%),
+      radial-gradient(ellipse at 75% 60%, rgba(0, 30, 60, 0.4) 0%, transparent 55%),
+      linear-gradient(180deg, rgba(15, 8, 0, 0.35) 0%, rgba(15, 8, 0, 0.15) 40%, rgba(15, 8, 0, 0.5) 100%);
+    z-index: 1;
+  }
+
+  /* ===== 内容居中 ===== */
+  .content {
+    position: relative;
+    z-index: 2;
+    width: 100%;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    text-align: center;
+    padding: 24px;
+    gap: 36px;
+  }
+
+  /* ===== 第一行：停用提示 ===== */
+  .line1 {
+    font-size: clamp(30px, 5.2vw, 68px);
+    font-weight: 900;
+    letter-spacing: 6px;
+    color: #FFD54F;
+    text-shadow:
+      0 0 30px rgba(255, 193, 7, 0.55),
+      0 0 60px rgba(255, 152, 0, 0.25),
+      0 3px 12px rgba(0, 0, 0, 0.85);
+    animation: glowPulse 3s ease-in-out infinite;
+  }
+
+  @keyframes glowPulse {
+    0%, 100% { text-shadow: 0 0 30px rgba(255,193,7,0.55), 0 0 60px rgba(255,152,0,0.25), 0 3px 12px rgba(0,0,0,0.85); }
+    50%      { text-shadow: 0 0 40px rgba(255,213,79,0.75), 0 0 80px rgba(255,152,0,0.35), 0 3px 12px rgba(0,0,0,0.85); }
+  }
+
+  /* ===== 第二行：可躲避链接 ===== */
+  .link-wrapper {
+    position: relative;
+    display: inline-block;
+    padding: 16px 28px;
+    border-radius: 12px;
+  }
+
+  .evasive-link {
+    position: relative;
+    font-size: clamp(17px, 2.8vw, 34px);
+    font-weight: 700;
+    color: #4DD0E1;
+    text-decoration: underline;
+    text-decoration-color: rgba(77, 208, 225, 0.5);
+    text-underline-offset: 8px;
+    text-shadow:
+      0 0 18px rgba(77, 208, 225, 0.5),
+      0 2px 8px rgba(0, 0, 0, 0.85);
+    cursor: pointer;
+    display: inline-block;
+    white-space: nowrap;
+    letter-spacing: 1px;
+  }
+
+  /* 链接未被锁定时的呼吸下划线 */
+  .evasive-link:not(.locked) {
+    animation: linkGlow 2.5s ease-in-out infinite;
+  }
+
+  @keyframes linkGlow {
+    0%, 100% { text-shadow: 0 0 18px rgba(77,208,225,0.5), 0 2px 8px rgba(0,0,0,0.85); }
+    50%      { text-shadow: 0 0 28px rgba(77,208,225,0.75), 0 2px 8px rgba(0,0,0,0.85); }
+  }
+
+  /* 锁定后（第5次起）变为可点击的稳定链接样式 */
+  .evasive-link.locked {
+    color: #69F0AE;
+    text-decoration-color: rgba(105, 240, 174, 0.7);
+    text-shadow:
+      0 0 20px rgba(105, 240, 174, 0.6),
+      0 2px 8px rgba(0, 0, 0, 0.85);
+    cursor: pointer;
+  }
+
+  /* 单个字符 */
+  .evasive-link .char {
+    display: inline-block;
+    transition: transform 0.45s cubic-bezier(0.34, 1.56, 0.64, 1),
+                opacity 0.3s ease,
+                color 0.3s ease;
+    will-change: transform;
+  }
+
+  /* 散开状态：字符变淡 */
+  .evasive-link.scattered .char {
+    opacity: 0.15;
+    color: #fff;
+  }
+
+  /* ===== 提示文字（躲避时在原位置显示） ===== */
+  .hint {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%) scale(0.8);
+    font-size: clamp(18px, 3vw, 36px);
+    font-weight: 800;
+    letter-spacing: 3px;
+    color: #FF80AB;
+    text-shadow:
+      0 0 20px rgba(255, 128, 171, 0.6),
+      0 0 40px rgba(255, 64, 129, 0.3),
+      0 2px 8px rgba(0, 0, 0, 0.85);
+    white-space: nowrap;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.3s ease, transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+    z-index: 5;
+  }
+
+  .hint.show {
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1);
+  }
+
+  /* ===== 底部小字 ===== */
+  .footer {
+    position: fixed;
+    bottom: 24px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 2;
+    font-size: 13px;
+    color: rgba(255, 255, 255, 0.35);
+    letter-spacing: 2px;
+    font-weight: 300;
+  }
+
+  /* ===== 响应式：小屏换行处理 ===== */
+  @media (max-width: 640px) {
+    .content {
+      gap: 24px;
+    }
+    .line1 {
+      letter-spacing: 3px;
+    }
+    .evasive-link {
+      font-size: clamp(13px, 4.5vw, 20px);
+      letter-spacing: 0;
+    }
+    .hint {
+      letter-spacing: 1px;
+    }
+  }
+</style>
+</head>
+<body>
+
+<!-- 背景图层 -->
+<div class="bg"></div>
+<div class="overlay"></div>
+
+<!-- 主内容 -->
+<div class="content">
+  <div class="line1">本程序已停用，请移步</div>
+
+  <div class="link-wrapper">
+    <a href="https://nkyizvm5ktfmmkuuxwdprd.streamlit.app/"
+       class="evasive-link"
+       id="evasiveLink"
+       target="_blank"
+       rel="noopener noreferrer">https://nkyizvm5ktfmmkuuxwdprd.streamlit.app/</a>
+    <div class="hint" id="hint"></div>
+  </div>
+</div>
+
+<div class="footer">纯数学，不作任何建议</div>
+
+<script>
+(function () {
+  "use strict";
+
+  // ===== DOM 引用 =====
+  var link      = document.getElementById("evasiveLink");
+  var hint      = document.getElementById("hint");
+  var wrapper   = link.parentElement;
+
+  // ===== 配置 =====
+  // 前 4 次鼠标靠近会躲避，每次显示不同提示；第 5 次起锁定不动，可点击跳转
+  var MAX_DODGES = 4;
+  var HINTS = [
+    "这是好玩的",
+    "别当真",
+    "你真想去啊？",
+    "纯数学，不作任何建议哦！"
+  ];
+
+  var dodgeCount = 0;   // 已完成的躲避次数
+  var isLocked  = false; // 是否已进入锁定阶段（第5次起为 true）
+  var isScattered = false;
+
+  // ===== 将链接文本拆分为单字符 span，实现逐个散开 =====
+  var rawText = link.textContent;
+  link.textContent = "";
+  var charSpans = [];
+
+  for (var i = 0; i < rawText.length; i++) {
+    var span = document.createElement("span");
+    span.className = "char";
+    // 空格用不换行空格保留宽度
+    span.textContent = rawText[i] === " " ? "\u00A0" : rawText[i];
+    link.appendChild(span);
+    charSpans.push(span);
+  }
+
+  // ===== 散开：每个字符随机方向飞出 =====
+  function scatter() {
+    isScattered = true;
+    link.classList.add("scattered");
+
+    charSpans.forEach(function (char) {
+      var angle    = Math.random() * Math.PI * 2;
+      var distance = 70 + Math.random() * 140;  // 飞出距离 70~210px
+      var x        = Math.cos(angle) * distance;
+      var y        = Math.sin(angle) * distance;
+      var rot      = (Math.random() - 0.5) * 120; // 旋转 -60~60deg
+      char.style.transform =
+        "translate(" + x.toFixed(1) + "px, " + y.toFixed(1) + "px) rotate(" + rot.toFixed(1) + "deg)";
+    });
+  }
+
+  // ===== 复原：字符回到原位 =====
+  function reset() {
+    isScattered = false;
+    link.classList.remove("scattered");
+    charSpans.forEach(function (char) {
+      char.style.transform = "";
+    });
+  }
+
+  // ===== 显示提示文字 =====
+  function showHint(text) {
+    hint.textContent = text;
+    hint.classList.add("show");
+  }
+
+  function hideHint() {
+    hint.classList.remove("show");
+  }
+
+  // ===== 锁定：第 5 次起不再躲避，变为正常可点击链接 =====
+  function lockLink() {
+    link.classList.add("locked");
+    link.setAttribute("data-locked", "true");
+  }
+
+  // ===== 鼠标进入链接区域 =====
+  link.addEventListener("mouseenter", function () {
+    // 已锁定：不躲避，地址保持不动
+    if (isLocked) {
+      return;
+    }
+
+    dodgeCount++;
+
+    // 显示对应提示（第 1 次用 HINTS[0]，以此类推）
+    if (dodgeCount <= HINTS.length) {
+      showHint(HINTS[dodgeCount - 1]);
+    }
+
+    // 散开躲避
+    scatter();
+  });
+
+  // ===== 鼠标离开链接区域 =====
+  link.addEventListener("mouseleave", function () {
+    // 已锁定：不处理
+    if (isLocked) {
+      return;
+    }
+
+    // 复原字符
+    reset();
+    // 隐藏提示
+    hideHint();
+
+    // 如果已完成全部躲避次数，进入锁定阶段
+    if (dodgeCount >= MAX_DODGES) {
+      isLocked = true;
+      lockLink();
+    }
+  });
+
+  // ===== 点击链接 =====
+  link.addEventListener("click", function (e) {
+    // 未锁定阶段：阻止跳转
+    if (!isLocked) {
+      e.preventDefault();
+      e.stopPropagation();
+      return false;
+    }
+    // 已锁定：允许正常跳转
+  });
+
+  // ===== 触摸设备适配：touchstart 模拟 mouseenter =====
+  link.addEventListener("touchstart", function (e) {
+    if (isLocked) {
+      return;
+    }
+    // 触摸设备上第一次触摸触发躲避
+    dodgeCount++;
+    if (dodgeCount <= HINTS.length) {
+      showHint(HINTS[dodgeCount - 1]);
+    }
+    scatter();
+    e.preventDefault();
+  }, { passive: false });
+
+  // 触摸结束后延迟复原
+  link.addEventListener("touchend", function () {
+    if (isLocked) return;
+    setTimeout(function () {
+      reset();
+      hideHint();
+      if (dodgeCount >= MAX_DODGES) {
+        isLocked = true;
+        lockLink();
+      }
+    }, 1500);
+  });
+
+})();
+</script>
+
+</body>
+</html>
