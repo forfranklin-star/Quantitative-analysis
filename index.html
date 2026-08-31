@@ -193,6 +193,8 @@
   var isAnimating = false;
   var isReturning = false;   // 是否正在归位动画中
   var returnCallback = null; // 归位完成后的回调
+  var hovering    = false;   // 鼠标是否在链接上（防止重复触发）
+  var justTouched = false;   // 刚触摸过，忽略随后的模拟 mouseenter
 
   // ===== 构建 DOM：每个字符 = 容器(主字符 + 3层拖尾) =====
   var rawText = link.textContent;
@@ -455,10 +457,19 @@
     link.classList.add("locked");
   }
 
-  // ===== 鼠标进入 =====
+  // ===== 鼠标进入（带去重：hovering 守卫 + 触摸后忽略模拟事件） =====
   link.addEventListener("mouseenter", function () {
+    // 触摸设备上 touchstart 后会模拟 mouseenter，忽略它
+    if (justTouched) {
+      justTouched = false;
+      return;
+    }
+    // 已经在链接上，不重复触发
+    if (hovering) return;
+    hovering = true;
+
     if (isLocked) return;
-    // 已达到最大躲避次数：锁定，不再躲避（不依赖异步归位回调）
+    // 已达到最大躲避次数：锁定
     if (dodgeCount >= MAX_DODGES) {
       isLocked = true;
       lockLink();
@@ -471,9 +482,10 @@
 
   // ===== 鼠标离开：平滑归位 + 提示渐隐 =====
   link.addEventListener("mouseleave", function () {
+    hovering = false;
     if (isLocked) return;
     hideHint();
-    startReturn();  // 仅归位，锁定逻辑在 mouseenter 中判断
+    startReturn();
   });
 
   // ===== 点击 =====
@@ -485,9 +497,11 @@
     }
   });
 
-  // ===== 触摸设备 =====
+  // ===== 触摸设备（preventDefault 阻止后续模拟鼠标事件） =====
   link.addEventListener("touchstart", function (e) {
     if (isLocked) return;
+    justTouched = true;
+    hovering = true;
     if (dodgeCount >= MAX_DODGES) {
       isLocked = true;
       lockLink();
@@ -500,6 +514,7 @@
   }, { passive: false });
 
   link.addEventListener("touchend", function () {
+    hovering = false;
     if (isLocked) return;
     setTimeout(function () {
       hideHint();
