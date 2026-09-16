@@ -1,0 +1,2 @@
+# 停用页依赖（仅需 Streamlit；定时功能 st.fragment / st.rerun(scope) 需 >=1.37）
+streamlit>=1.37.0,<2.0
